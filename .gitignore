@@ -1,0 +1,14 @@
+# Binaries
+/caddy
+*.exe
+*.out
+
+# Go build cache
+/bin/
+/pkg/
+
+# IDE
+.idea/
+.vscode/
+
+
