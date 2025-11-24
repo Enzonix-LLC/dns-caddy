@@ -20,6 +20,16 @@ const (
 	defaultTimeout = 10 * time.Second
 )
 
+// recordWithID wraps libdns.RR to add an ID field for provider-specific record tracking.
+type recordWithID struct {
+	rr libdns.RR
+	ID string
+}
+
+func (r recordWithID) RR() libdns.RR {
+	return r.rr
+}
+
 // Provider implements the libdns interfaces for Enzonix.
 type Provider struct {
 	APIKey      string         `json:"api_key,omitempty"`
@@ -169,7 +179,11 @@ func (p *Provider) DeleteRecords(ctx context.Context, zone string, recs []libdns
 
 	resolved := make([]libdns.Record, 0, len(recs))
 	for _, record := range recs {
-		id := strings.TrimSpace(record.ID)
+		var id string
+		if recWithID, ok := record.(recordWithID); ok {
+			id = recWithID.ID
+		}
+
 		if id == "" {
 			if existing == nil {
 				if existing, err = p.client.ListRecords(ctx, zone, nil); err != nil {
@@ -185,8 +199,8 @@ func (p *Provider) DeleteRecords(ctx context.Context, zone string, recs []libdns
 		if err := p.client.DeleteRecord(ctx, zone, id); err != nil {
 			return nil, err
 		}
-		record.ID = id
-		resolved = append(resolved, record)
+		rr := record.RR()
+		resolved = append(resolved, recordWithID{rr: rr, ID: id})
 	}
 
 	return resolved, nil
@@ -221,7 +235,12 @@ func (p *Provider) SetRecords(ctx context.Context, zone string, recs []libdns.Re
 
 	result := make([]libdns.Record, 0, len(recs))
 	for _, record := range recs {
-		if strings.TrimSpace(record.ID) == "" {
+		var id string
+		if recWithID, ok := record.(recordWithID); ok {
+			id = recWithID.ID
+		}
+
+		if id == "" {
 			req := recordToCreateRequest(record)
 			created, err := p.client.CreateRecord(ctx, zone, req)
 			if err != nil {
@@ -232,7 +251,7 @@ func (p *Provider) SetRecords(ctx context.Context, zone string, recs []libdns.Re
 		}
 
 		updateReq := recordToUpdateRequest(record)
-		updated, err := p.client.UpdateRecord(ctx, zone, record.ID, updateReq)
+		updated, err := p.client.UpdateRecord(ctx, zone, id, updateReq)
 		if err != nil {
 			return nil, err
 		}
@@ -243,50 +262,73 @@ func (p *Provider) SetRecords(ctx context.Context, zone string, recs []libdns.Re
 }
 
 func recordToCreateRequest(record libdns.Record) sdk.CreateRecordRequest {
+	rr := record.RR()
 	req := sdk.CreateRecordRequest{
-		Name:    record.Name,
-		Type:    record.Type,
-		Content: record.Value,
+		Name:    rr.Name,
+		Type:    rr.Type,
+		Content: rr.Data,
 	}
 
-	if ttl := int(record.TTL / time.Second); ttl > 0 {
+	if ttl := int(rr.TTL / time.Second); ttl > 0 {
 		req.TTL = ttl
 	}
-	if record.Priority > 0 {
-		req.Priority = record.Priority
+
+	// Handle MX records (priority is called Preference)
+	if mx, ok := record.(libdns.MX); ok {
+		if mx.Preference > 0 {
+			req.Priority = uint(mx.Preference)
+		}
 	}
-	if record.Weight > 0 {
-		req.Weight = record.Weight
+
+	// Handle SRV records (priority and weight)
+	if srv, ok := record.(libdns.SRV); ok {
+		if srv.Priority > 0 {
+			req.Priority = uint(srv.Priority)
+		}
+		if srv.Weight > 0 {
+			req.Weight = uint(srv.Weight)
+		}
 	}
 
 	return req
 }
 
 func recordToUpdateRequest(record libdns.Record) sdk.UpdateRecordRequest {
+	rr := record.RR()
 	req := sdk.UpdateRecordRequest{}
 
-	if record.Name != "" {
-		name := record.Name
+	if rr.Name != "" {
+		name := rr.Name
 		req.Name = &name
 	}
-	if record.Type != "" {
-		typ := record.Type
+	if rr.Type != "" {
+		typ := rr.Type
 		req.Type = &typ
 	}
-	if record.Value != "" {
-		content := record.Value
+	if rr.Data != "" {
+		content := rr.Data
 		req.Content = &content
 	}
-	if ttl := int(record.TTL / time.Second); ttl > 0 {
+	if ttl := int(rr.TTL / time.Second); ttl > 0 {
 		req.TTL = &ttl
 	}
-	if record.Priority > 0 {
-		priority := record.Priority
-		req.Priority = &priority
+
+	// Extract priority and weight from specific record types
+	if mx, ok := record.(libdns.MX); ok {
+		if mx.Preference > 0 {
+			priority := uint(mx.Preference)
+			req.Priority = &priority
+		}
 	}
-	if record.Weight > 0 {
-		weight := record.Weight
-		req.Weight = &weight
+	if srv, ok := record.(libdns.SRV); ok {
+		if srv.Priority > 0 {
+			priority := uint(srv.Priority)
+			req.Priority = &priority
+		}
+		if srv.Weight > 0 {
+			weight := uint(srv.Weight)
+			req.Weight = &weight
+		}
 	}
 
 	return req
@@ -294,24 +336,28 @@ func recordToUpdateRequest(record libdns.Record) sdk.UpdateRecordRequest {
 
 func sdkRecordToLibdns(zone string, record sdk.Record) libdns.Record {
 	ttl := time.Duration(record.TTL) * time.Second
-	return libdns.Record{
-		ID:       record.ID,
-		Type:     record.Type,
-		Name:     libdns.RelativeName(strings.TrimSuffix(record.Name, "."), ensureTrailingDot(zone)),
-		Value:    record.Content,
-		TTL:      ttl,
-		Priority: record.Priority,
-		Weight:   record.Weight,
+	rr := libdns.RR{
+		Type: record.Type,
+		Name: libdns.RelativeName(strings.TrimSuffix(record.Name, "."), ensureTrailingDot(zone)),
+		Data: record.Content,
+		TTL:  ttl,
+	}
+
+	// Create a record with ID
+	return recordWithID{
+		rr: rr,
+		ID: record.ID,
 	}
 }
 
 func matchRecordID(records []sdk.Record, zone string, target libdns.Record) string {
-	targetName := strings.TrimSuffix(libdns.AbsoluteName(target.Name, ensureTrailingDot(zone)), ".")
+	targetRR := target.RR()
+	targetName := strings.TrimSuffix(libdns.AbsoluteName(targetRR.Name, ensureTrailingDot(zone)), ".")
 	for _, r := range records {
 		name := strings.TrimSuffix(r.Name, ".")
 		if strings.EqualFold(name, strings.TrimSuffix(targetName, ".")) &&
-			strings.EqualFold(r.Type, target.Type) &&
-			r.Content == target.Value {
+			strings.EqualFold(r.Type, targetRR.Type) &&
+			r.Content == targetRR.Data {
 			return r.ID
 		}
 	}

@@ -79,7 +79,11 @@ func TestGetRecords(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(recs) != 1 || recs[0].Value != "1.2.3.4" || recs[0].Name != "www" {
+	if len(recs) != 1 {
+		t.Fatalf("unexpected record count: %d", len(recs))
+	}
+	rr := recs[0].RR()
+	if rr.Data != "1.2.3.4" || rr.Name != "www" {
 		t.Fatalf("unexpected records: %#v", recs)
 	}
 }
@@ -112,7 +116,11 @@ func TestAppendRecords(t *testing.T) {
 	}
 
 	input := []libdns.Record{
-		{Type: "TXT", Name: "_acme-challenge", Value: "token", TTL: 120 * time.Second},
+		libdns.TXT{
+			Name: "_acme-challenge",
+			Text: "token",
+			TTL:  120 * time.Second,
+		},
 	}
 
 	recs, err := p.AppendRecords(context.Background(), "example.com.", input)
@@ -120,7 +128,11 @@ func TestAppendRecords(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(recs) != 1 || recs[0].TTL != 120*time.Second {
+	if len(recs) != 1 {
+		t.Fatalf("unexpected record count: %d", len(recs))
+	}
+	rr := recs[0].RR()
+	if rr.TTL != 120*time.Second {
 		t.Fatalf("unexpected records response: %#v", recs)
 	}
 	if received.TTL != 120 {
@@ -154,7 +166,14 @@ func TestDeleteRecords(t *testing.T) {
 	}
 
 	input := []libdns.Record{
-		{ID: "abc", Type: "TXT", Name: "_acme-challenge", Value: "token"},
+		recordWithID{
+			rr: libdns.RR{
+				Type: "TXT",
+				Name: "_acme-challenge",
+				Data: "token",
+			},
+			ID: "abc",
+		},
 	}
 
 	if _, err := p.DeleteRecords(context.Background(), "example.com.", input); err != nil {
@@ -189,7 +208,15 @@ func TestSetRecords(t *testing.T) {
 	}
 
 	input := []libdns.Record{
-		{ID: "1", Type: "A", Name: "www", Value: "1.1.1.1", TTL: 30 * time.Second},
+		recordWithID{
+			rr: libdns.RR{
+				Type: "A",
+				Name: "www",
+				Data: "1.1.1.1",
+				TTL:  30 * time.Second,
+			},
+			ID: "1",
+		},
 	}
 
 	recs, err := p.SetRecords(context.Background(), "example.com.", input)
@@ -197,7 +224,11 @@ func TestSetRecords(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(recs) != 1 || recs[0].Value != "1.1.1.1" {
+	if len(recs) != 1 {
+		t.Fatalf("unexpected record count: %d", len(recs))
+	}
+	rr := recs[0].RR()
+	if rr.Data != "1.1.1.1" {
 		t.Fatalf("unexpected response: %#v", recs)
 	}
 }
