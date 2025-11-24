@@ -1,5 +1,5 @@
-github.com/Enzonix-LLC/dns-sdk-go v0.1.0 h1:WdgLoaQrxfYZwUGBZ4Fk75lGzd/lMTCIwR4xXXmC8EM=
-github.com/Enzonix-LLC/dns-sdk-go v0.1.0/go.mod h1:wqW6Ve7UTIpjbmyGYAUUHhcJYpSO7DfMHBb4dKuPyVM=
+github.com/Enzonix-LLC/dns-sdk-go v1.0.0 h1:89fN3mi8inQrafQ7u5GvAln6/e3fkrd5gzFAmhbNXwA=
+github.com/Enzonix-LLC/dns-sdk-go v1.0.0/go.mod h1:wqW6Ve7UTIpjbmyGYAUUHhcJYpSO7DfMHBb4dKuPyVM=
 github.com/beorn7/perks v1.0.1 h1:VlbKKnNfV8bJzeqoa4cOKqO6bYr3WgKZxO8Z16+hsOM=
 github.com/beorn7/perks v1.0.1/go.mod h1:G2ZrVWU2WbWT9wwq4/hrbKbnv/1ERSJQ0ibhJ6rlkpw=
 github.com/caddyserver/caddy/v2 v2.8.4 h1:q3pe0wpBj1OcHFZ3n/1nl4V4bxBrYoSoab7rL9BMYNk=
