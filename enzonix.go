@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	sdk "github.com/Enzonix-LLC/dns-sdk-go"
@@ -36,8 +37,10 @@ type Provider struct {
 	APIEndpoint string         `json:"api_endpoint,omitempty"`
 	Timeout     caddy.Duration `json:"timeout,omitempty"`
 
-	client *sdk.Client
-	logger *zap.Logger
+	client        *sdk.Client
+	logger        *zap.Logger
+	domainCache   map[string]string
+	domainCacheMu sync.RWMutex
 }
 
 // Ensure Provider conforms to required interfaces.
@@ -92,6 +95,9 @@ func (p *Provider) Provision(ctx caddy.Context) error {
 	}
 
 	p.client = client
+	if p.domainCache == nil {
+		p.domainCache = make(map[string]string)
+	}
 	return nil
 }
 
@@ -152,10 +158,15 @@ func (p *Provider) AppendRecords(ctx context.Context, zone string, recs []libdns
 		return []libdns.Record{}, nil
 	}
 
+	domainID, err := p.domainIDForZone(ctx, zone)
+	if err != nil {
+		return nil, err
+	}
+
 	result := make([]libdns.Record, 0, len(recs))
 	for _, record := range recs {
-		req := recordToCreateRequest(record)
-		created, err := p.client.CreateRecord(ctx, zone, req)
+		req := recordToCreateRequest(record, domainID)
+		created, err := p.client.CreateRecord(ctx, req)
 		if err != nil {
 			return nil, err
 		}
@@ -174,8 +185,11 @@ func (p *Provider) DeleteRecords(ctx context.Context, zone string, recs []libdns
 		return []libdns.Record{}, nil
 	}
 
-	var existing []sdk.Record
-	var err error
+	var (
+		existing []sdk.Record
+		err      error
+		domainID string
+	)
 
 	resolved := make([]libdns.Record, 0, len(recs))
 	for _, record := range recs {
@@ -185,8 +199,13 @@ func (p *Provider) DeleteRecords(ctx context.Context, zone string, recs []libdns
 		}
 
 		if id == "" {
+			if domainID == "" {
+				if domainID, err = p.domainIDForZone(ctx, zone); err != nil {
+					return nil, err
+				}
+			}
 			if existing == nil {
-				if existing, err = p.client.ListRecords(ctx, zone, nil); err != nil {
+				if existing, err = p.client.ListDomainRecords(ctx, domainID); err != nil {
 					return nil, err
 				}
 			}
@@ -196,7 +215,7 @@ func (p *Provider) DeleteRecords(ctx context.Context, zone string, recs []libdns
 			}
 		}
 
-		if err := p.client.DeleteRecord(ctx, zone, id); err != nil {
+		if err := p.client.DeleteRecord(ctx, id); err != nil {
 			return nil, err
 		}
 		rr := record.RR()
@@ -212,7 +231,12 @@ func (p *Provider) GetRecords(ctx context.Context, zone string) ([]libdns.Record
 		return nil, err
 	}
 
-	records, err := p.client.ListRecords(ctx, zone, nil)
+	domainID, err := p.domainIDForZone(ctx, zone)
+	if err != nil {
+		return nil, err
+	}
+
+	records, err := p.client.ListDomainRecords(ctx, domainID)
 	if err != nil {
 		return nil, err
 	}
@@ -234,6 +258,7 @@ func (p *Provider) SetRecords(ctx context.Context, zone string, recs []libdns.Re
 	}
 
 	result := make([]libdns.Record, 0, len(recs))
+	var domainID string
 	for _, record := range recs {
 		var id string
 		if recWithID, ok := record.(recordWithID); ok {
@@ -241,8 +266,14 @@ func (p *Provider) SetRecords(ctx context.Context, zone string, recs []libdns.Re
 		}
 
 		if id == "" {
-			req := recordToCreateRequest(record)
-			created, err := p.client.CreateRecord(ctx, zone, req)
+			if domainID == "" {
+				var err error
+				if domainID, err = p.domainIDForZone(ctx, zone); err != nil {
+					return nil, err
+				}
+			}
+			req := recordToCreateRequest(record, domainID)
+			created, err := p.client.CreateRecord(ctx, req)
 			if err != nil {
 				return nil, err
 			}
@@ -251,7 +282,7 @@ func (p *Provider) SetRecords(ctx context.Context, zone string, recs []libdns.Re
 		}
 
 		updateReq := recordToUpdateRequest(record)
-		updated, err := p.client.UpdateRecord(ctx, zone, id, updateReq)
+		updated, err := p.client.UpdateRecord(ctx, id, updateReq)
 		if err != nil {
 			return nil, err
 		}
@@ -261,32 +292,30 @@ func (p *Provider) SetRecords(ctx context.Context, zone string, recs []libdns.Re
 	return result, nil
 }
 
-func recordToCreateRequest(record libdns.Record) sdk.CreateRecordRequest {
+func recordToCreateRequest(record libdns.Record, domainID string) sdk.CreateRecordRequest {
 	rr := record.RR()
 	req := sdk.CreateRecordRequest{
-		Name:    rr.Name,
-		Type:    rr.Type,
-		Content: rr.Data,
+		DomainID: domainID,
+		Name:     rr.Name,
+		Type:     rr.Type,
+		Value:    rr.Data,
 	}
 
 	if ttl := int(rr.TTL / time.Second); ttl > 0 {
-		req.TTL = ttl
+		req.TTL = intPtr(ttl)
 	}
 
 	// Handle MX records (priority is called Preference)
 	if mx, ok := record.(libdns.MX); ok {
 		if mx.Preference > 0 {
-			req.Priority = uint(mx.Preference)
+			req.Priority = intPtr(int(mx.Preference))
 		}
 	}
 
 	// Handle SRV records (priority and weight)
 	if srv, ok := record.(libdns.SRV); ok {
 		if srv.Priority > 0 {
-			req.Priority = uint(srv.Priority)
-		}
-		if srv.Weight > 0 {
-			req.Weight = uint(srv.Weight)
+			req.Priority = intPtr(int(srv.Priority))
 		}
 	}
 
@@ -306,32 +335,30 @@ func recordToUpdateRequest(record libdns.Record) sdk.UpdateRecordRequest {
 		req.Type = &typ
 	}
 	if rr.Data != "" {
-		content := rr.Data
-		req.Content = &content
+		value := rr.Data
+		req.Value = &value
 	}
 	if ttl := int(rr.TTL / time.Second); ttl > 0 {
-		req.TTL = &ttl
+		req.TTL = intPtr(ttl)
 	}
 
 	// Extract priority and weight from specific record types
 	if mx, ok := record.(libdns.MX); ok {
 		if mx.Preference > 0 {
-			priority := uint(mx.Preference)
-			req.Priority = &priority
+			req.Priority = intPtr(int(mx.Preference))
 		}
 	}
 	if srv, ok := record.(libdns.SRV); ok {
 		if srv.Priority > 0 {
-			priority := uint(srv.Priority)
-			req.Priority = &priority
-		}
-		if srv.Weight > 0 {
-			weight := uint(srv.Weight)
-			req.Weight = &weight
+			req.Priority = intPtr(int(srv.Priority))
 		}
 	}
 
 	return req
+}
+
+func intPtr(v int) *int {
+	return &v
 }
 
 func sdkRecordToLibdns(zone string, record sdk.Record) libdns.Record {
@@ -339,7 +366,7 @@ func sdkRecordToLibdns(zone string, record sdk.Record) libdns.Record {
 	rr := libdns.RR{
 		Type: record.Type,
 		Name: libdns.RelativeName(strings.TrimSuffix(record.Name, "."), ensureTrailingDot(zone)),
-		Data: record.Content,
+		Data: record.Value,
 		TTL:  ttl,
 	}
 
@@ -357,11 +384,50 @@ func matchRecordID(records []sdk.Record, zone string, target libdns.Record) stri
 		name := strings.TrimSuffix(r.Name, ".")
 		if strings.EqualFold(name, strings.TrimSuffix(targetName, ".")) &&
 			strings.EqualFold(r.Type, targetRR.Type) &&
-			r.Content == targetRR.Data {
+			r.Value == targetRR.Data {
 			return r.ID
 		}
 	}
 	return ""
+}
+
+func (p *Provider) domainIDForZone(ctx context.Context, zone string) (string, error) {
+	normalized := canonicalZone(zone)
+	if normalized == "" {
+		return "", errors.New("enzonix: zone must not be empty")
+	}
+
+	p.domainCacheMu.RLock()
+	if id, ok := p.domainCache[normalized]; ok {
+		p.domainCacheMu.RUnlock()
+		return id, nil
+	}
+	p.domainCacheMu.RUnlock()
+
+	domains, err := p.client.ListDomains(ctx)
+	if err != nil {
+		return "", fmt.Errorf("enzonix: list domains: %w", err)
+	}
+
+	for _, domain := range domains {
+		if canonicalZone(domain.Name) == normalized {
+			p.domainCacheMu.Lock()
+			if p.domainCache == nil {
+				p.domainCache = make(map[string]string)
+			}
+			p.domainCache[normalized] = domain.ID
+			p.domainCacheMu.Unlock()
+			return domain.ID, nil
+		}
+	}
+
+	return "", fmt.Errorf("enzonix: domain %s not found in account", strings.TrimSuffix(zone, "."))
+}
+
+func canonicalZone(zone string) string {
+	zone = strings.TrimSpace(zone)
+	zone = strings.TrimSuffix(zone, ".")
+	return strings.ToLower(zone)
 }
 
 func ensureTrailingDot(zone string) string {

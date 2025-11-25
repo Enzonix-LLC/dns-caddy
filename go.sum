@@ -8,8 +8,8 @@ dmitri.shuralyov.com/service/change v0.0.0-20181023043359-a85b471d5412/go.mod h1
 dmitri.shuralyov.com/state v0.0.0-20180228185332-28bcc343414c/go.mod h1:0PRwlb0D6DFvNNtx+9ybjezNCa8XF0xaYcETyp6rHWU=
 git.apache.org/thrift.git v0.0.0-20180902110319-2566ecd5d999/go.mod h1:fPE2ZNJGynbRyZ4dJvy6G277gSllfV2HJqblrnkyeyg=
 github.com/BurntSushi/toml v0.3.1/go.mod h1:xHWCNGjB5oqiDr8zfno3MHue2Ht5sIBksp03qcyfWMU=
-github.com/Enzonix-LLC/dns-sdk-go v1.0.0 h1:89fN3mi8inQrafQ7u5GvAln6/e3fkrd5gzFAmhbNXwA=
-github.com/Enzonix-LLC/dns-sdk-go v1.0.0/go.mod h1:wqW6Ve7UTIpjbmyGYAUUHhcJYpSO7DfMHBb4dKuPyVM=
+github.com/Enzonix-LLC/dns-sdk-go v1.1.0 h1:XKe9+TjKMdmmR37NBDH1fB1HeotZh1uBKZ2HdslJEHM=
+github.com/Enzonix-LLC/dns-sdk-go v1.1.0/go.mod h1:wqW6Ve7UTIpjbmyGYAUUHhcJYpSO7DfMHBb4dKuPyVM=
 github.com/anmitsu/go-shlex v0.0.0-20161002113705-648efa622239/go.mod h1:2FmKhYUyUczH0OGQWaF5ceTx0UBShxjsH6f8oGKYe2c=
 github.com/beorn7/perks v0.0.0-20180321164747-3a771d992973/go.mod h1:Dwedo/Wpr24TaqPxmxbtue+5NUziq4I4S80YR8gNf3Q=
 github.com/beorn7/perks v1.0.1 h1:VlbKKnNfV8bJzeqoa4cOKqO6bYr3WgKZxO8Z16+hsOM=

@@ -3,7 +3,7 @@ module github.com/Enzonix-LLC/dns-caddy
 go 1.24
 
 require (
-	github.com/Enzonix-LLC/dns-sdk-go v1.0.1
+	github.com/Enzonix-LLC/dns-sdk-go v1.1.0
 	github.com/caddyserver/caddy/v2 v2.10.0
 	github.com/caddyserver/certmagic v0.23.0
 	github.com/libdns/libdns v1.0.0

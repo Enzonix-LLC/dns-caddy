@@ -43,21 +43,21 @@ enzonix {
 
 func TestGetRecords(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			t.Fatalf("expected GET got %s", r.Method)
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/client/domains":
+			_ = json.NewEncoder(w).Encode([]map[string]any{
+				{"id": "dom-1", "name": "example.com"},
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/client/domains/dom-1/records":
+			if got := r.Header.Get("Authorization"); got != "Bearer key" {
+				t.Fatalf("expected auth header, got %q", got)
+			}
+			_ = json.NewEncoder(w).Encode([]map[string]any{
+				{"id": "1", "type": "A", "name": "www", "value": "1.2.3.4", "ttl": 60},
+			})
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
 		}
-		if r.URL.Path != "/zones/example.com/records" {
-			t.Fatalf("unexpected path: %s", r.URL.Path)
-		}
-		if got := r.Header.Get("Authorization"); got != "Bearer key" {
-			t.Fatalf("expected auth header, got %q", got)
-		}
-
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"records": []map[string]any{
-				{"id": "1", "type": "A", "name": "www", "content": "1.2.3.4", "ttl": 60},
-			},
-		})
 	}))
 	defer server.Close()
 
@@ -92,13 +92,19 @@ func TestAppendRecords(t *testing.T) {
 	var received sdk.CreateRecordRequest
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			t.Fatalf("expected POST got %s", r.Method)
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/client/domains":
+			_ = json.NewEncoder(w).Encode([]map[string]any{
+				{"id": "dom-1", "name": "example.com"},
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/client/records":
+			if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
+				t.Fatalf("decode received: %v", err)
+			}
+			_ = json.NewEncoder(w).Encode(enzonixRecordFromCreate(received))
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
 		}
-		if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
-			t.Fatalf("decode received: %v", err)
-		}
-		_ = json.NewEncoder(w).Encode(enzonixRecordFromCreate("example.com", received))
 	}))
 	defer server.Close()
 
@@ -135,8 +141,11 @@ func TestAppendRecords(t *testing.T) {
 	if rr.TTL != 120*time.Second {
 		t.Fatalf("unexpected records response: %#v", recs)
 	}
-	if received.TTL != 120 {
+	if received.TTL == nil || *received.TTL != 120 {
 		t.Fatalf("unexpected payload ttl: %#v", received)
+	}
+	if received.DomainID != "dom-1" {
+		t.Fatalf("unexpected domain id: %s", received.DomainID)
 	}
 }
 
@@ -145,7 +154,7 @@ func TestDeleteRecords(t *testing.T) {
 		if r.Method != http.MethodDelete {
 			t.Fatalf("expected DELETE got %s", r.Method)
 		}
-		if r.URL.Path != "/zones/example.com/records/abc" {
+		if r.URL.Path != "/api/client/records/abc" {
 			t.Fatalf("unexpected path: %s", r.URL.Path)
 		}
 		w.WriteHeader(http.StatusNoContent)
@@ -183,14 +192,17 @@ func TestDeleteRecords(t *testing.T) {
 
 func TestSetRecords(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPatch {
-			t.Fatalf("expected PATCH got %s", r.Method)
+		if r.Method != http.MethodPut {
+			t.Fatalf("expected PUT got %s", r.Method)
+		}
+		if r.URL.Path != "/api/client/records/1" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
 		}
 		var payload sdk.UpdateRecordRequest
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 			t.Fatalf("decode received: %v", err)
 		}
-		_ = json.NewEncoder(w).Encode(enzonixRecordFromUpdate("1", "example.com", payload))
+		_ = json.NewEncoder(w).Encode(enzonixRecordFromUpdate("1", payload))
 	}))
 	defer server.Close()
 
@@ -235,18 +247,23 @@ func TestSetRecords(t *testing.T) {
 
 func caddyDuration(d time.Duration) caddy.Duration { return caddy.Duration(d) }
 
-func enzonixRecordFromCreate(zone string, req sdk.CreateRecordRequest) map[string]any {
+func enzonixRecordFromCreate(req sdk.CreateRecordRequest) map[string]any {
+	ttl := 0
+	if req.TTL != nil {
+		ttl = *req.TTL
+	}
+
 	return map[string]any{
-		"id":      "generated",
-		"zone":    zone,
-		"name":    req.Name,
-		"type":    req.Type,
-		"content": req.Content,
-		"ttl":     req.TTL,
+		"id":        "generated",
+		"domain_id": req.DomainID,
+		"name":      req.Name,
+		"type":      req.Type,
+		"value":     req.Value,
+		"ttl":       ttl,
 	}
 }
 
-func enzonixRecordFromUpdate(id, zone string, req sdk.UpdateRecordRequest) map[string]any {
+func enzonixRecordFromUpdate(id string, req sdk.UpdateRecordRequest) map[string]any {
 	name := ""
 	if req.Name != nil {
 		name = *req.Name
@@ -255,9 +272,9 @@ func enzonixRecordFromUpdate(id, zone string, req sdk.UpdateRecordRequest) map[s
 	if req.Type != nil {
 		typ = *req.Type
 	}
-	content := ""
-	if req.Content != nil {
-		content = *req.Content
+	value := ""
+	if req.Value != nil {
+		value = *req.Value
 	}
 	ttl := 0
 	if req.TTL != nil {
@@ -265,11 +282,10 @@ func enzonixRecordFromUpdate(id, zone string, req sdk.UpdateRecordRequest) map[s
 	}
 
 	return map[string]any{
-		"id":      id,
-		"zone":    zone,
-		"name":    name,
-		"type":    typ,
-		"content": content,
-		"ttl":     ttl,
+		"id":    id,
+		"name":  name,
+		"type":  typ,
+		"value": value,
+		"ttl":   ttl,
 	}
 }
