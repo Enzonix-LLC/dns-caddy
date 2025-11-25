@@ -55,11 +55,11 @@ var (
 )
 
 func init() {
-	caddy.RegisterModule(Provider{})
+	caddy.RegisterModule(&Provider{})
 }
 
 // CaddyModule returns the Caddy module information.
-func (Provider) CaddyModule() caddy.ModuleInfo {
+func (*Provider) CaddyModule() caddy.ModuleInfo {
 	return caddy.ModuleInfo{
 		ID:  "dns.providers.enzonix",
 		New: func() caddy.Module { return new(Provider) },
