@@ -165,10 +165,19 @@ func (p *Provider) AppendRecords(ctx context.Context, zone string, recs []libdns
 
 	result := make([]libdns.Record, 0, len(recs))
 	for _, record := range recs {
-		req := recordToCreateRequest(record, domainID)
+		req := recordToCreateRequest(record, domainID, zone)
 		created, err := p.client.CreateRecord(ctx, req)
 		if err != nil {
-			return nil, err
+			if p.logger != nil {
+				p.logger.Error("failed to create DNS record",
+					zap.String("zone", zone),
+					zap.String("name", req.Name),
+					zap.String("type", req.Type),
+					zap.String("value", req.Value),
+					zap.Error(err),
+				)
+			}
+			return nil, fmt.Errorf("enzonix: create record: %w", err)
 		}
 		result = append(result, sdkRecordToLibdns(zone, *created))
 	}
@@ -272,10 +281,19 @@ func (p *Provider) SetRecords(ctx context.Context, zone string, recs []libdns.Re
 					return nil, err
 				}
 			}
-			req := recordToCreateRequest(record, domainID)
+			req := recordToCreateRequest(record, domainID, zone)
 			created, err := p.client.CreateRecord(ctx, req)
 			if err != nil {
-				return nil, err
+				if p.logger != nil {
+					p.logger.Error("failed to create DNS record",
+						zap.String("zone", zone),
+						zap.String("name", req.Name),
+						zap.String("type", req.Type),
+						zap.String("value", req.Value),
+						zap.Error(err),
+					)
+				}
+				return nil, fmt.Errorf("enzonix: create record: %w", err)
 			}
 			result = append(result, sdkRecordToLibdns(zone, *created))
 			continue
@@ -292,11 +310,18 @@ func (p *Provider) SetRecords(ctx context.Context, zone string, recs []libdns.Re
 	return result, nil
 }
 
-func recordToCreateRequest(record libdns.Record, domainID string) sdk.CreateRecordRequest {
+func recordToCreateRequest(record libdns.Record, domainID string, zone string) sdk.CreateRecordRequest {
 	rr := record.RR()
+
+	// Convert relative name to absolute FQDN for SDK
+	// The SDK expects full FQDN names (as seen in sdkRecordToLibdns conversion)
+	absoluteName := libdns.AbsoluteName(rr.Name, ensureTrailingDot(zone))
+	// Remove trailing dot as SDK likely expects FQDN without trailing dot
+	name := strings.TrimSuffix(absoluteName, ".")
+
 	req := sdk.CreateRecordRequest{
 		DomainID: domainID,
-		Name:     rr.Name,
+		Name:     name,
 		Type:     rr.Type,
 		Value:    rr.Data,
 	}
